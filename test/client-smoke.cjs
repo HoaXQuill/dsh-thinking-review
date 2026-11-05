@@ -15,6 +15,10 @@ const React = {
   useEffect() {
     hookIndex++
   },
+  useCallback(fn) {
+    hookIndex++
+    return fn
+  },
 }
 
 let loaded = null
@@ -38,10 +42,11 @@ console.log('exports:', Object.keys(mod).join(','), 'inject:', JSON.stringify(mo
 
 const registrations = []
 const sent = []
+const ALLOWED_SLOTS = ['conversation.input.dock', 'sidebar.panellist', 'main']
 const ctx = {
   slots: {
     inject(name, fn) {
-      assert.strictEqual(name, 'conversation.input.dock')
+      assert.ok(ALLOWED_SLOTS.includes(name), '注册了未知槽位：' + name)
       fn()
     },
     register(props, Component) {
@@ -65,8 +70,19 @@ const ctx = {
 }
 
 mod.apply(ctx)
-assert.strictEqual(registrations.length, 1, '应当只注册一个 dock')
-const { props, Component } = registrations[0]
+assert.strictEqual(registrations.length, 3, '应当是 dock + 侧栏一行 + 主列页面')
+
+const dock = registrations.find((r) => r.props.name === 'conversation.input.dock')
+const row = registrations.find((r) => r.props.name === 'sidebar.panellist')
+const page = registrations.find((r) => r.props.name === 'main')
+assert.ok(dock && row && page, '三类注册没齐')
+assert.strictEqual(row.props.id, 'review-notes')
+assert.strictEqual(row.props.label(), '复盘经验')
+assert.strictEqual(page.props.key, row.props.id, '主列 key 必须与侧栏 id 一致')
+assert.deepStrictEqual(row.Component({ size: 16 }), row.Component({ size: 16 }))
+console.log('侧栏行:', row.props.id, row.props.label(), 'order:', row.props.order, '| 主列 key:', page.props.key)
+
+const { props, Component } = dock
 console.log('slot id:', props.id, 'order:', props.order)
 
 const injected = props.inject('s1')
@@ -74,6 +90,7 @@ assert.strictEqual(injected.sessionId, 's1')
 global.fetch = () => Promise.resolve({ json: () => Promise.resolve({ ok: true, enabled: false }) })
 
 hookIndex = 0
+hooks.length = 0
 const tree = Component(injected)
 const texts = []
 const walk = (node) => {
@@ -98,5 +115,23 @@ setTimeout(() => {
   assert.ok(sent[0].text.includes('复盘'), '指令里没有「复盘」')
   assert.ok(sent[0].text.includes('remember'), '指令里没有 remember 同意流程')
   console.log('复盘指令已发出, 长度', sent[0].text.length)
+
+  // 复盘经验页：空列表时给说明，不白屏
+  global.fetch = () => Promise.resolve({ json: () => Promise.resolve({ ok: true, reviews: [], pending: [] }) })
+  hookIndex = 0
+  hooks.length = 0
+  const pageTree = page.Component({})
+  const pageTexts = []
+  const walkPage = (node) => {
+    if (node === null || node === undefined) return
+    if (Array.isArray(node)) return node.forEach(walkPage)
+    if (typeof node === 'string') return pageTexts.push(node)
+    if (typeof node === 'object' && node.children) node.children.forEach(walkPage)
+  }
+  walkPage(pageTree)
+  console.log('页面文案:', pageTexts.join(' | '))
+  assert.ok(pageTexts.includes('复盘经验'), '页面没有标题')
+  assert.ok(pageTexts.includes('刷新'), '页面没有刷新按钮')
+
   console.log('CLIENT SMOKE OK')
 }, 0)

@@ -1,4 +1,4 @@
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, readFileSync as readFileSync2 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
@@ -24,11 +24,14 @@ const agent = {
 const subagent = { session: { id: 's2', header: { origin: 'subagent' } }, ctx: agent.ctx }
 
 let listed = [agent, subagent]
+const listeners = []
 const ctx = {
   agents: { list: () => listed },
   webServer: { register: (r) => { routes.set(r.path, r.handler); return () => {} } },
   effect: (fn) => { const d = fn(); return () => { if (typeof d === 'function') d() } },
   interval: () => () => {},
+  on: (type, fn, opts) => { listeners.push({ type, fn, opts }); return () => {} },
+  get: (name) => (name === 'sessions' ? { get: () => ({ title: '冒烟会话' }) } : undefined),
 }
 
 mod.apply(ctx)
@@ -69,6 +72,52 @@ console.log('POST off:', JSON.stringify(await call('/dsh-thinking-review/state',
 console.log('disposed:', JSON.stringify(disposed))
 console.log('mounted:', (await call('/dsh-thinking-review/mounted', 'GET', '/dsh-thinking-review/mounted')).body)
 console.log('bad GET:', JSON.stringify(await call('/dsh-thinking-review/state', 'GET', '/dsh-thinking-review/state')))
+
+// —— 复盘捕获：登记 → 攒正文 → 一轮结束落库 ——
+const emit = (event) => {
+  for (const l of listeners) if (l.type === 'session/event') l.fn('s1', event)
+}
+const longText = '复盘：这次先把按钮修好了，根因是槽位键写错，客户端整个 apply 失败。'.repeat(8)
+console.log('登记:', JSON.stringify(await call('/dsh-thinking-review/reviews/request', 'POST', '/dsh-thinking-review/reviews/request', { session: 's1' })))
+emit({ type: 'assistant/message', data: { message: { content: [
+  { type: 'reasoning', text: '先想想' },
+  { type: 'text', text: longText },
+  { type: 'tool-call', id: 't1', name: 'remember', arguments: {} },
+] } } })
+emit({ type: 'turn/end', data: {} })
+
+const list = JSON.parse((await call('/dsh-thinking-review/reviews', 'GET', '/dsh-thinking-review/reviews')).body)
+if (list.reviews.length !== 1) throw new Error('复盘没落库，条数=' + list.reviews.length)
+const rec = list.reviews[0]
+if (!rec.chars || rec.chars < 160) throw new Error('复盘字数不对：' + rec.chars)
+if (!rec.summary || rec.summary.length === 0) throw new Error('没有摘要')
+if (rec.title !== '冒烟会话') throw new Error('标题没抓到：' + rec.title)
+console.log('落库:', rec.id, rec.chars, '字, 标题', rec.title)
+
+// 落盘：reviews.json 里能读到同一条（重启后靠它恢复）
+const onDisk = JSON.parse(readFileSync2(join(process.env.DSH_HOME, 'dsh-thinking-review', 'reviews.json'), 'utf8'))
+if (!Array.isArray(onDisk.reviews) || onDisk.reviews.length !== 1) throw new Error('reviews.json 没写对')
+console.log('落盘 OK:', onDisk.reviews[0].id)
+
+const item = JSON.parse((await call('/dsh-thinking-review/reviews/item', 'GET', '/dsh-thinking-review/reviews/item?id=' + encodeURIComponent(rec.id))).body)
+if (!item.ok || !item.review.text.includes('槽位键')) throw new Error('全文没取到')
+
+// 太短的输出丢掉，不落库
+await call('/dsh-thinking-review/reviews/request', 'POST', '/dsh-thinking-review/reviews/request', { session: 's1' })
+emit({ type: 'assistant/message', data: { message: { content: [{ type: 'text', text: '太短' }] } } })
+emit({ type: 'turn/end', data: {} })
+const afterShort = JSON.parse((await call('/dsh-thinking-review/reviews', 'GET', '/dsh-thinking-review/reviews')).body)
+if (afterShort.reviews.length !== 1) throw new Error('短输出也落库了')
+
+// 没登记过的会话根本不收
+emit({ type: 'assistant/message', data: { message: { content: [{ type: 'text', text: longText }] } } })
+emit({ type: 'turn/end', data: {} })
+console.log('未登记会话未收:', JSON.parse((await call('/dsh-thinking-review/reviews', 'GET', '/dsh-thinking-review/reviews')).body).reviews.length === 1)
+
+// 删除
+console.log('删除:', (await call('/dsh-thinking-review/reviews/delete', 'POST', '/dsh-thinking-review/reviews/delete', { id: rec.id })).body)
+const afterDelete = JSON.parse((await call('/dsh-thinking-review/reviews', 'GET', '/dsh-thinking-review/reviews')).body)
+if (afterDelete.reviews.length !== 0) throw new Error('删除没生效')
 
 // 重启后从文件恢复（此时文件里是 off）
 const before = sections.length

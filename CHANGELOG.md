@@ -1,5 +1,16 @@
 # 更新日志
 
+## 1.1.0
+
+新增：左侧导航一栏 **复盘经验**，把每次「复盘本会话」的产出存档，不用再翻对话记录。
+
+- Host 半订阅 `session/event`（`{ global: true }`）：`assistant/message` 里的 text 块按会话攒进 pending，`turn/end` 时正文 ≥ 160 字就落成一条记录并写 `$DSH_HOME/dsh-thinking-review/reviews.json`（上限 500 条）；pending 15 分钟过期。
+- 只有先 `POST /reviews/request` 登记过的会话才会被收——平时聊天不进列表。
+- 新路由：`/reviews/request`、`/reviews`（列表）、`/reviews/item`（全文）、`/reviews/delete`。
+- 客户端半新增两处注册：`sidebar.panellist`（id `review-notes`，label「复盘经验」，图标带 `data-dsh-panel-entry`）与 `main`（key 同为 `review-notes`）。页面支持展开 / 复制 / 删除（两次确认）/ 刷新，并有空态说明。
+- 点「复盘本会话」时先登记再发指令；提示文案改成「产出会收进『复盘经验』」。
+- 已知限制：1.1.0 之前的复盘没有捕获，不会补录；老会话标题读不到时显示会话 id 前 8 位。
+
 ## 1.0.2
 
 修复：对话输入框上方的两个按钮（追问澄清 / 复盘本会话）完全不显示。

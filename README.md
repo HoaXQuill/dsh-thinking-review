@@ -1,9 +1,10 @@
 # dsh-thinking-review · 先想清楚，再复盘
 
-DSH 插件，两件事：
+DSH 插件，三件事：
 
 1. **追问澄清**（per-session 开关）：开了以后，DSH 遇到需求含糊时先问清再动手；它只问「答案不同、做法就不同」的问题，问完给一句复述与推翻条件，然后直接做。
 2. **复盘本会话**（按钮）：把这一轮问答、结论、成功经验整理成四块，再单独问你是否写入长期记忆；你同意哪几步，才写哪几步。
+3. **复盘经验**（左侧导航新一栏）：每次复盘自动存档，不用再翻对话记录。
 
 ## 分类
 
@@ -12,7 +13,7 @@ DSH 插件，两件事：
 | 类型 | 对话增强 / 记忆 |
 | GitHub topics | `dsh` `dsh-plugin` `thinking` `review` `clarify` `memory` `cordis` |
 | 依赖 | DSH 桌面端（web 客户端半）、cordis 插件树、Node ≥ 20 |
-| 版本 | 1.0.2 |
+| 版本 | 1.1.0 |
 | 仓库 | https://github.com/HoaXQuill/dsh-thinking-review |
 
 ## 安装
@@ -87,6 +88,22 @@ dsh plugin add file:C:/Users/HoaXQ/Desktop/插件/dsh-thinking-review
 
 最后单独一行问：**全部写入 / 只写入第几条 / 不要**。你明确同意后才逐条写；「不要」就停，不反复劝。
 
+### 复盘经验（左侧导航）
+
+左侧导航多一行 **复盘经验**，点开是本机所有复盘记录的存档：
+
+- 每条显示：时间、会话标题（拿不到标题就显示会话 id 前 8 位）、字数、摘要。
+- **展开**看全文，**复制**一键复制（可再次粘到别处），**删除**要点两次确认。
+- **刷新**重读列表；列表来自 Host 的 `$DSH_HOME/dsh-thinking-review/reviews.json`，重启不丢。
+
+怎么进去的：点「复盘本会话」时，浏览器半边先 `POST /reviews/request` 登记这一轮，Host 订阅 `session/event`，把这一轮 `assistant/message` 的正文攒起来，`turn/end` 时若正文 ≥ 160 字就落库成一条。**只有点过复盘的那一轮会被收**；平时聊天不会进列表。没等到回复超过 15 分钟自动放弃。
+
+已知限制：
+
+- 只有装了 1.1.0 之后产生的复盘才会进列表（之前的没有捕获，不会补录）。
+- 老会话的标题读不到（DSH 只对加载过的会话给标题），显示会话 id 前 8 位。
+- 列表最多 500 条，超出丢最旧的。
+
 ## HTTP 接口
 
 Host 半注册在 `/dsh-thinking-review`：
@@ -96,7 +113,11 @@ Host 半注册在 `/dsh-thinking-review`：
 | GET | `/dsh-thinking-review/state?session=<id>` | `{ok, session, enabled}` |
 | POST | `/dsh-thinking-review/state` | body `{session, enabled}`，写入并立即挂载/卸载 |
 | GET | `/dsh-thinking-review/text` | 当前进程实际生效的提示词（诊断用） |
-| GET | `/dsh-thinking-review/mounted` | 已挂载的会话列表与状态文件路径 |
+| GET | `/dsh-thinking-review/mounted` | 已挂载的会话列表、状态文件路径、复盘条数 |
+| POST | `/dsh-thinking-review/reviews/request` | body `{session}`，登记「这一轮要收进复盘」 |
+| GET | `/dsh-thinking-review/reviews` | 复盘列表（不含全文），附正在等待的会话 |
+| GET | `/dsh-thinking-review/reviews/item?id=` | 单条复盘全文 |
+| POST | `/dsh-thinking-review/reviews/delete` | body `{id}`，删一条 |
 
 ## 开发
 

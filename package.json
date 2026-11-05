@@ -1,6 +1,6 @@
 {
   "name": "dsh-thinking-review",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "description": "DSH 插件：先问清楚再动手的追问澄清开关 + 会话复盘写入长期记忆。",
   "type": "module",
   "main": "lib/index.js",
