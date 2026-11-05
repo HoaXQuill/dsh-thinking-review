@@ -1,5 +1,14 @@
 # 更新日志
 
+## 1.0.2
+
+修复：对话输入框上方的两个按钮（追问澄清 / 复盘本会话）完全不显示。
+
+- 根因：`lib/client.js` 里 `slots.register({ name })` 的 `name` 写成了插件名 `dsh-thinking-review`。该字段是**槽位键**，必须是 `conversation.input.dock`；写错会让 slots 立即抛出 `slot "dsh-thinking-review" is not declared (a parent entry's children table must declare it)`，客户端 `apply()` 整体失败，页面只留一个空的 `data-slot-error` 节点，所以视觉上等于"没有按钮"。
+- 槽位键收成常量 `SLOT`，`register` 失败时打 `console.error`（此前完全静默）。
+- `inject` 由 `['slots', 'sessions']` 收为 `['slots']`：`sessions` 只在点击时通过 `ctx.get('sessions')` 取，避免"等服务"导致 entry 永不激活。
+- 无 Host 半改动；升到 1.0.2 后刷新页面即可。
+
 ## 1.0.1
 
 仓库整理与文档修订，**插件行为无变化**。
