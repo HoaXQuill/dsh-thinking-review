@@ -1,5 +1,13 @@
 # 更新日志
 
+## 1.0.1
+
+仓库整理与文档修订，**插件行为无变化**。
+
+- 工作区收拢：开发脚本、asar 解包产物、npm 登录脚本移入 `_recon/`，并加入 `.gitignore`，不再进任何发布产物。
+- `PUBLISH.md` 补记实测坑：沙箱内 Git for Windows 的 cygwin `ssh.exe` 会因无法创建命名管道而失败（`couldn't create signal pipe, Win32 error 5`），改用 `GIT_SSH="C:/Windows/System32/OpenSSH/ssh.exe"` 可绕开（`GIT_SSH_COMMAND` 仍走 sh，无效）。
+- 无 `lib/`、`cordis.patch.yml` 改动，升级无需改配置。
+
 ## 1.0.0
 
 首个正式版（由 dsh-clarify 更名而来）。
