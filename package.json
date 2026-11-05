@@ -46,5 +46,13 @@
       ]
     }
   },
-  "peerDependencies": {}
+  "peerDependencies": {},
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/HoaXQuill/dsh-thinking-review.git"
+  },
+  "homepage": "https://github.com/HoaXQuill/dsh-thinking-review#readme",
+  "bugs": {
+    "url": "https://github.com/HoaXQuill/dsh-thinking-review/issues"
+  }
 }

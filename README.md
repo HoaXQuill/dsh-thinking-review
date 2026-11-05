@@ -5,7 +5,23 @@ DSH 插件，两件事：
 1. **追问澄清**（per-session 开关）：开了以后，DSH 遇到需求含糊时先问清再动手；它只问「答案不同、做法就不同」的问题，问完给一句复述与推翻条件，然后直接做。
 2. **复盘本会话**（按钮）：把这一轮问答、结论、成功经验整理成四块，再单独问你是否写入长期记忆；你同意哪几步，才写哪几步。
 
+## 分类
+
+| 项 | 值 |
+| --- | --- |
+| 类型 | 对话增强 / 记忆 |
+| GitHub topics | `dsh` `dsh-plugin` `thinking` `review` `clarify` `memory` `cordis` |
+| 依赖 | DSH 桌面端（web 客户端半）、cordis 插件树、Node ≥ 20 |
+| 版本 | 1.0.0 |
+| 仓库 | https://github.com/HoaXQuill/dsh-thinking-review |
+
 ## 安装
+
+### 从 GitHub（无需 npm）
+
+```bash
+dsh plugin add github:HoaXQuill/dsh-thinking-review
+```
 
 ### 从 npm（发布后）
 
