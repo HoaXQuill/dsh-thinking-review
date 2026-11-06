@@ -1,5 +1,17 @@
 # 更新日志
 
+## 1.3.0
+
+复盘不再只是一段 JSON 里的文本：每条复盘落成一页 A4 PDF，存在 `$DSH_HOME/dsh-thinking-review/reviews/<id>.pdf`，「复盘经验」里点「打开」直接看文件。
+
+- Host 新增 `buildReviewHtml` / `markdownToHtml`：把复盘正文排成 A4 页面（微软雅黑、`@page{size:A4;margin:18mm 16mm}`、标题/列表/加粗/行内代码），不引第三方库。
+- 新增 `createReviewFile`：调本机 Edge/Chrome 无头打印（`--headless=new --print-to-pdf`）生成 PDF；异步执行，不阻塞 `turn/end`。25 秒没出文件就放弃并退回 `<id>.md`，列表标「MD」。
+- 记录里加 `file`（绝对路径）与 `kind`（`pdf` / `md`）。老记录打开列表时自动补生成，不用重新复盘。
+- 新路由 `GET /dsh-thinking-review/reviews/file?id=`：按 `content-type` 流文件本体（`application/pdf` / `text/markdown`），`?download=1` 转附件；校验路径必须落在 reviews 目录内；文件还没生成完返回 409。`reviews/delete` 同时删文件。
+- 浏览器半边：每行加「打开」按钮与新窗口打开，加 PDF / MD / 生成中 标记；没有文件时提示「还在生成」。
+- 浏览器/打印不可用的环境（缺 Edge、子进程被拦）自动降级成 Markdown，功能不丢。
+- 提示词、Host 的捕获时机、开关行为均无变化。
+
 ## 1.2.2
 
 修「复盘完，复盘经验里空空如也」这个看起来像丢数据的现象。

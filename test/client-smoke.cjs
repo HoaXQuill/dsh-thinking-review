@@ -133,5 +133,12 @@ setTimeout(() => {
   assert.ok(pageTexts.includes('复盘经验'), '页面没有标题')
   assert.ok(pageTexts.includes('刷新'), '页面没有刷新按钮')
 
+  // 复盘文件：页面要有「打开」，且走 /reviews/file 路由（二进制流，不能当 JSON 解析）
+  const source = require('node:fs').readFileSync(path.join(__dirname, '..', 'lib', 'client.js'), 'utf8')
+  assert.ok(source.includes('/reviews/file?id='), '页面没有拼文件地址')
+  assert.ok(source.includes('"打开"'), '行里没有打开按钮')
+  assert.ok(source.includes('item.kind === "pdf"'), '没有 PDF 标记')
+  console.log('文件入口 OK')
+
   console.log('CLIENT SMOKE OK')
 }, 0)

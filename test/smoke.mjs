@@ -1,9 +1,11 @@
-import { mkdtempSync, readFileSync as readFileSync2 } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync as readFileSync2 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
 
 process.env.DSH_HOME = mkdtempSync(join(tmpdir(), 'thinking-review-smoke-'))
+// 冒烟不起浏览器进程：复盘文件走 .md 分支（PDF 分支在真实安装里验证）。
+process.env.DSH_THINKING_REVIEW_NO_PDF = '1'
 
 const mod = await import('../lib/index.js')
 
@@ -45,8 +47,15 @@ function call(route, method, url, body) {
     req.method = method
     req.url = url
     req.headers = {}
-    const out = { code: 0, body: '' }
-    const res = { writeHead(code) { out.code = code }, end(text) { out.body = String(text); resolve(out) } }
+    const out = { code: 0, body: '', headers: {}, raw: null }
+    const res = {
+      writeHead(code, headers) { out.code = code; out.headers = headers || {} },
+      end(chunk) {
+        out.raw = chunk
+        out.body = typeof chunk === 'string' ? chunk : ''
+        resolve(out)
+      },
+    }
     routes.get(route)(req, res).catch((err) => { out.code = 500; out.body = String(err); resolve(out) })
   })
 }
@@ -105,6 +114,44 @@ const onDisk = JSON.parse(readFileSync2(join(process.env.DSH_HOME, 'dsh-thinking
 if (!Array.isArray(onDisk.reviews) || onDisk.reviews.length !== 1) throw new Error('reviews.json 没写对')
 console.log('落盘 OK:', onDisk.reviews[0].id)
 
+// 复盘文件：落库后要在后台生成，等到文件字段出现
+const waitFor = async (fn, ms) => {
+  const start = Date.now()
+  while (Date.now() - start < ms) {
+    const value = fn()
+    if (value) return value
+    await new Promise((r) => setTimeout(r, 100))
+  }
+  return ''
+}
+const reviewsFile = join(process.env.DSH_HOME, 'dsh-thinking-review', 'reviews.json')
+const filePath = await waitFor(() => {
+  try {
+    const disk = JSON.parse(readFileSync2(reviewsFile, 'utf8'))
+    const first = Array.isArray(disk.reviews) ? disk.reviews[0] : null
+    return first && typeof first.file === 'string' ? first.file : ''
+  } catch (error) {
+    return ''
+  }
+}, 10000)
+if (filePath === '') throw new Error('复盘文件没生成')
+if (!filePath.endsWith('.md')) throw new Error('NO_PDF 下应该是 .md，得到 ' + filePath)
+const fileText = readFileSync2(filePath, 'utf8')
+if (!fileText.includes('槽位键')) throw new Error('文件里没有复盘正文')
+console.log('复盘文件:', filePath.endsWith('.md') ? 'md' : 'other', fileText.length, '字')
+
+const withFile = JSON.parse((await call('/dsh-thinking-review/reviews', 'GET', '/dsh-thinking-review/reviews')).body)
+if (!withFile.reviews[0].file || withFile.reviews[0].kind !== 'md') throw new Error('列表没带文件字段')
+
+// 面板「打开」走的就是这条：取文件本体
+const fileRes = await call('/dsh-thinking-review/reviews/file', 'GET', '/dsh-thinking-review/reviews/file?id=' + encodeURIComponent(rec.id))
+if (fileRes.code !== 200) throw new Error('取文件失败：' + fileRes.code + ' ' + fileRes.body)
+if (String(fileRes.headers['content-type'] || '').indexOf('text/markdown') !== 0) throw new Error('content-type 不对：' + fileRes.headers['content-type'])
+console.log('取文件 OK:', fileRes.headers['content-type'], String(fileRes.body).length, '字')
+
+const missing = await call('/dsh-thinking-review/reviews/file', 'GET', '/dsh-thinking-review/reviews/file?id=nope')
+if (missing.code !== 404) throw new Error('不存在的 id 应该 404，得到 ' + missing.code)
+
 const item = JSON.parse((await call('/dsh-thinking-review/reviews/item', 'GET', '/dsh-thinking-review/reviews/item?id=' + encodeURIComponent(rec.id))).body)
 if (!item.ok || !item.review.text.includes('槽位键')) throw new Error('全文没取到')
 
@@ -124,6 +171,8 @@ console.log('未登记会话未收:', JSON.parse((await call('/dsh-thinking-revi
 console.log('删除:', (await call('/dsh-thinking-review/reviews/delete', 'POST', '/dsh-thinking-review/reviews/delete', { id: rec.id })).body)
 const afterDelete = JSON.parse((await call('/dsh-thinking-review/reviews', 'GET', '/dsh-thinking-review/reviews')).body)
 if (afterDelete.reviews.length !== 0) throw new Error('删除没生效')
+if (existsSync(filePath)) throw new Error('删除后文件还在：' + filePath)
+console.log('删文件 OK')
 
 // 重启后从文件恢复（此时文件里是 off）
 const before = sections.length
