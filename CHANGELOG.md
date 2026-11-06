@@ -7,6 +7,7 @@
 - Host 半订阅 `session/event`（`{ global: true }`）：`assistant/message` 里的 text 块按会话攒进 pending，`turn/end` 时正文 ≥ 160 字就落成一条记录并写 `$DSH_HOME/dsh-thinking-review/reviews.json`（上限 500 条）；pending 15 分钟过期。
 - 只有先 `POST /reviews/request` 登记过的会话才会被收——平时聊天不进列表。
 - 新路由：`/reviews/request`、`/reviews`（列表）、`/reviews/item`（全文）、`/reviews/delete`。
+- 追问提示词补一张**「不清晰」清单**（10 个面：目标 / 交付物与格式 / 验收标准 / 范围与不做 / 约束 / 环境与权限 / 数据与来源 / 时间与优先级 / 可逆性 / 既有约定）：任一面答不上来且答案会改变做法，DSH 就主动提问；能查到的先查，按「答错代价 × 不确定性」挑 1–3 条问。提示词 679 → 1203 字。
 - 客户端半新增两处注册：`sidebar.panellist`（id `review-notes`，label「复盘经验」，图标带 `data-dsh-panel-entry`）与 `main`（key 同为 `review-notes`）。页面支持展开 / 复制 / 删除（两次确认）/ 刷新，并有空态说明。
 - 点「复盘本会话」时先登记再发指令；提示文案改成「产出会收进『复盘经验』」。
 - 已知限制：1.1.0 之前的复盘没有捕获，不会补录；老会话标题读不到时显示会话 id 前 8 位。

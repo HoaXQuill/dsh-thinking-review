@@ -58,7 +58,11 @@ console.log('subagent 未挂:', sections.every((s) => s.name === 'plugin:dsh-thi
 
 // 提示词关键判据别在改动中丢掉（来自《高阶思维：核验与修正与重构》）。
 const text = sections[0].text()
-for (const needle of ['信息价值为零', '先找决策', '至少 3 种合理解读', '分离预测', '做法分岔', '只读侦察', '什么会让你改主意', '一行边界']) {
+for (const needle of [
+  '信息价值为零', '主动提问', '先找决策',
+  '十个面', '目标：', '交付物与格式', '验收标准', '范围与不做', '约束：', '环境与权限', '数据与来源', '时间与优先级', '可逆性', '既有约定',
+  '至少 3 种合理解读', '分离预测', '做法分岔', '只读侦察', '什么会让你改主意', '一行边界',
+]) {
   if (!text.includes(needle)) throw new Error('提示词缺少判据：' + needle)
 }
 console.log('判据齐全，字数：', text.length)
