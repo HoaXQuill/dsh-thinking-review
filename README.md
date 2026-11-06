@@ -13,7 +13,7 @@ DSH 插件，三件事：
 | 类型 | 对话增强 / 记忆 |
 | GitHub topics | `dsh` `dsh-plugin` `thinking` `review` `clarify` `memory` `cordis` |
 | 依赖 | DSH 桌面端（web 客户端半）、cordis 插件树、Node ≥ 20 |
-| 版本 | 1.2.1 |
+| 版本 | 1.2.2 |
 | 仓库 | https://github.com/HoaXQuill/dsh-thinking-review |
 
 ## 安装
