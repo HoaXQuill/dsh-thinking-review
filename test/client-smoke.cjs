@@ -85,9 +85,13 @@ console.log('侧栏行:', row.props.id, row.props.label(), 'order:', row.props.o
 const { props, Component } = dock
 console.log('slot id:', props.id, 'order:', props.order)
 
+const fetched = []
 const injected = props.inject('s1')
 assert.strictEqual(injected.sessionId, 's1')
-global.fetch = () => Promise.resolve({ json: () => Promise.resolve({ ok: true, enabled: false }) })
+global.fetch = (url) => {
+  fetched.push(String(url))
+  return Promise.resolve({ ok: true, json: () => Promise.resolve({ ok: true, enabled: false }) })
+}
 
 hookIndex = 0
 hooks.length = 0
@@ -106,14 +110,25 @@ console.log('按钮文案:', texts.join(' | '))
 assert.ok(texts.some((t) => t.startsWith('追问澄清')), '缺少开关按钮')
 assert.ok(texts.some((t) => t === '复盘本会话'), '缺少复盘按钮')
 
-// 复盘：把指令发进当前会话
-const reviewBtn = tree.children[1]
+// 三个控件都在：追问澄清、经验优先、复盘本会话（顺序固定，页面靠这个顺序排）
+const pill = (label) => tree.children.find((c) => c && Array.isArray(c.children) && c.children.some((x) => typeof x === 'string' && x.startsWith(label)))
+const clarifyBtn = pill('追问澄清')
+const expBtn = pill('经验优先')
+const reviewBtn = pill('复盘本会话')
+assert.ok(clarifyBtn && expBtn && reviewBtn, '控件不全：' + texts.join(' | '))
+assert.ok(texts.some((t) => t.startsWith('经验优先')), '缺少经验优先按钮')
+
+// 经验优先：点一下要 POST 到 /experience/state
+expBtn.props.onClick()
 reviewBtn.props.onClick()
 setTimeout(() => {
   assert.strictEqual(sent.length, 1, '复盘指令没有落到会话')
   assert.strictEqual(sent[0].sid, 's1')
   assert.ok(sent[0].text.includes('复盘'), '指令里没有「复盘」')
   assert.ok(sent[0].text.includes('remember'), '指令里没有 remember 同意流程')
+  console.log('请求:', fetched.join(' '))
+  assert.ok(fetched.some((u) => u.endsWith('/experience/state')), '经验优先没打到 /experience/state')
+  assert.ok(fetched.some((u) => u.endsWith('/reviews/request')), '复盘没先登记 /reviews/request')
   console.log('复盘指令已发出, 长度', sent[0].text.length)
 
   // 复盘经验页：空列表时给说明，不白屏
@@ -139,6 +154,12 @@ setTimeout(() => {
   assert.ok(source.includes('"打开"'), '行里没有打开按钮')
   assert.ok(source.includes('item.kind === "pdf"'), '没有 PDF 标记')
   console.log('文件入口 OK')
+
+  // 经验库：页面要能整理、能检索
+  assert.ok(source.includes('/lessons/digest'), '没有「立即整理」入口')
+  assert.ok(source.includes('/lessons?limit='), '没有经验检索')
+  assert.ok(source.includes('经验库'), '没有经验库卡片')
+  console.log('经验库入口 OK')
 
   console.log('CLIENT SMOKE OK')
 }, 0)

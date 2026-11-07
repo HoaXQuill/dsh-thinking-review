@@ -1,10 +1,11 @@
 # dsh-thinking-review · 先想清楚，再复盘
 
-DSH 插件，三件事：
+DSH 插件，四件事：
 
 1. **追问澄清**（per-session 开关）：开了以后，DSH 遇到需求含糊时先问清再动手；它只问「答案不同、做法就不同」的问题，问完给一句复述与推翻条件，然后直接做。
 2. **复盘本会话**（按钮）：把这一轮问答、结论、成功经验整理成四块，再单独问你是否写入长期记忆；你同意哪几步，才写哪几步。
 3. **复盘经验**（左侧导航新一栏）：每个会话自动存成一页 PDF，后续复盘并进同一份（同样的段落只留一份），点开就能看，不用再翻对话记录。
+4. **经验库 + 经验优先**（每三天整理一次）：把复盘里的结论与经验抽成条目、去重合并；打开「经验优先」后，DSH 动手前先按本轮诉求在库里找相似场景，找到就引用编号与适用条件。
 
 ## 分类
 
@@ -13,7 +14,7 @@ DSH 插件，三件事：
 | 类型 | 对话增强 / 记忆 |
 | GitHub topics | `dsh` `dsh-plugin` `thinking` `review` `clarify` `memory` `cordis` |
 | 依赖 | DSH 桌面端（web 客户端半）、cordis 插件树、Node ≥ 20 |
-| 版本 | 1.5.0 |
+| 版本 | 1.6.0 |
 | 仓库 | https://github.com/HoaXQuill/dsh-thinking-review |
 
 ## 安装
@@ -60,6 +61,7 @@ dsh plugin add file:C:/Users/HoaXQ/Desktop/插件/dsh-thinking-review
 对话输入框下面多一行：
 
 - `[● 追问澄清：开/关]` —— 只对本会话生效，状态存 `$DSH_HOME/dsh-thinking-review/state.json`，刷新页面、重启 DSH 都还在。
+- `[● 经验优先：开/关]` —— 只对本会话生效：开了以后 DSH 动手前先去经验库匹配相似场景；与「追问澄清」互相独立，可以只开一个。
 - `[复盘本会话]` —— 点一下会向当前会话发一条复盘指令（不发到别的会话，也不改你的草稿）。
 
 ### 追问逻辑（为什么这么问）
@@ -120,6 +122,29 @@ PDF 怎么来的：Host 自己渲染 HTML（微软雅黑、A4、`@page` 页边�
 - 老会话的标题读不到（DSH 只对加载过的会话给标题），显示会话 id 前 8 位。
 - 档案数上限 500 条（按会话），超出丢最旧的。
 
+### 经验库（每三天整理，可以手动）
+
+「复盘经验」页顶部有一张**经验库**卡片：
+
+- **整理**：启动时检查一次，之后每 30 分钟看一次上次整理时间，**超过 3 天**且已有复盘就重新整理；也可以点「立即整理」。
+- **抽什么**：只认每份复盘里「结论与决定 / 成功经验 / 候选长期记忆」（也认「结论 / 经验 / 长期记忆」）标题下的列表项，8–240 字的条目才会进库。
+- **怎么去重**：文字归一化后做相似度（汉字二元组 + 英文词）Jaccard ≥ 0.55 视为同一条——命中次数 +1、保留更长的表述、合并来源会话、更新时间。所以同一个教训在十个会话里出现，只有一条，命中 10 次，排前面。
+- **排序**：先按命中次数降序，再按最近时间；编号 `l1..lN`，上限 300 条。
+- **落盘**：`$DSH_HOME/dsh-thinking-review/lessons.json`（程序读）+ `lessons.md`（人读，方便你自己翻或让别的工具检索）。
+- **检索**：卡片里有输入框，回车按关键词过滤（走 `GET /lessons?q=`），排序 = 相似度 + 命中次数加成。
+
+**整理是规则抽取，不是让模型总结**：Host 半拿不到模型，所以只做确定性的抓取、归一化与合并——不会写出复盘里没有的结论。
+
+### 经验优先（per-session 开关）
+
+打开后，本会话额外挂一段提示词（order 89960，与追问澄清的 89950 各自独立）：
+
+- 四条规则：①先在这份经验库里找相似场景，再看当前情况；②**经验是先验不是证据**，与当前事实冲突时以事实为准，并在回答里说明冲突；③不要为了用经验而套——只有真的相似才引用，引用时带编号与适用条件；④**经验库里没有相似场景**就直接说没有，不许编。
+- 选哪些：按「最近一条用户消息 + 会话标题」与条目做 token 相似度排序，取前 8 条（每条截断 160 字）；空库时明确写「经验库是空的，不要编造经验」。
+- 收尾自检：回答末尾检查一遍——引用的经验是否都写清了适用条件、有没有把经验当事实、发现新经验要不要建议复盘。
+
+子代理会话同样不挂这两段提示词。
+
 ## HTTP 接口
 
 Host 半注册在 `/dsh-thinking-review`：
@@ -128,13 +153,17 @@ Host 半注册在 `/dsh-thinking-review`：
 | --- | --- | --- |
 | GET | `/dsh-thinking-review/state?session=<id>` | `{ok, session, enabled}` |
 | POST | `/dsh-thinking-review/state` | body `{session, enabled}`，写入并立即挂载/卸载 |
-| GET | `/dsh-thinking-review/text` | 当前进程实际生效的提示词（诊断用） |
+| GET | `/dsh-thinking-review/text[?session=<id>]` | 当前进程实际生效的提示词（诊断用；带 `session` 时含经验优先那段） |
 | GET | `/dsh-thinking-review/mounted` | 已挂载的会话列表、状态文件路径、复盘条数 |
 | POST | `/dsh-thinking-review/reviews/request` | body `{session}`，登记「这一轮要收进复盘」 |
 | GET | `/dsh-thinking-review/reviews` | 复盘列表（不含全文），附正在等待的会话 |
 | GET | `/dsh-thinking-review/reviews/item?id=` | 单条复盘全文 |
 | GET | `/dsh-thinking-review/reviews/file?id=` | 复盘文件本体（`application/pdf` 或 `text/markdown`，`?download=1` 改成下载；文件还没生成完返回 409） |
 | POST | `/dsh-thinking-review/reviews/delete` | body `{id}`，删一条 |
+| GET | `/dsh-thinking-review/experience/state?session=<id>` | `{ok, session, enabled}`，经验优先开关 |
+| POST | `/dsh-thinking-review/experience/state` | body `{session, enabled}` |
+| GET | `/dsh-thinking-review/lessons?q=&limit=` | 经验库列表（`updatedAt` / `lastDigestAt` / `digestCount` / `total`） |
+| POST | `/dsh-thinking-review/lessons/digest` | 立即整理一次经验库 |
 
 ## 开发
 

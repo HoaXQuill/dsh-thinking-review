@@ -153,10 +153,19 @@ console.log('档案文件:', firstFile.endsWith('.md') ? 'md' : 'other')
 
 // 一次完整复盘：并进同一个会话档案，多一段
 const reviewText = [
-  '## 会话摘要', '', '这一轮把复盘落成 PDF，并让后续复盘并进同一份。'.repeat(6),
-  '', '## 结论与决定', '', '每个会话固定一条档案，id 就是 session-<会话>，文件路径固定所以覆盖同一份。'.repeat(3),
-  '', '## 成功经验', '', '难点在去重：同一段文字归一化后相同就不再追加，只更新时间。'.repeat(4),
-  '', '## 候选长期记忆', '', '无。',
+  '## 会话摘要', '',
+  '这一轮把复盘落成 PDF，并让后续复盘并进同一份。'.repeat(6),
+  '',
+  '## 结论与决定', '',
+  '- 每个会话固定一条档案：id 就是 session-<会话 id>，文件路径固定，所以后续复盘覆盖同一份。',
+  '- 复盘文件放在 reviews 子目录，PDF 生成失败时退回 Markdown，两者都从 /reviews/file 取。',
+  '',
+  '## 成功经验', '',
+  '- 难点在去重：同一段文字归一化后相同就不再追加，只更新时间，免得同一份 PDF 里堆重复段落。',
+  '- 打印期间内容又变时记 dirty，打完按最新内容再打一次，否则会丢掉最后一次更新。',
+  '',
+  '## 候选长期记忆', '',
+  '- 文件的真实路径在 mounted 路由的 reviewsDir 字段里，要核对就查它。',
 ].join('\n')
 emit('s1', botMsg(reviewText))
 emit('s1', endTurn())
@@ -240,6 +249,53 @@ if (list6.reviews.length !== 2) throw new Error('不同会话应该各一条，�
 const other = list6.reviews.find((x) => x.sessionId === 's3')
 if (!other || other.id === auto.id) throw new Error('不同会话共用了档案 id')
 console.log('会话隔离 OK:', other.id)
+
+// —— 经验库：从复盘里抽条目、去重、可检索 ——
+const digestRes = JSON.parse((await call('/dsh-thinking-review/lessons/digest', 'POST', '/dsh-thinking-review/lessons/digest', {})).body)
+if (digestRes.ok !== true) throw new Error('整理经验失败：' + digestRes.error)
+if (!(digestRes.total >= 3)) throw new Error('抽出来的经验太少：' + digestRes.total)
+const lessons1 = JSON.parse((await call('/dsh-thinking-review/lessons', 'GET', '/dsh-thinking-review/lessons?limit=100')).body)
+if (lessons1.total !== digestRes.total) throw new Error('列表条数与整理结果不一致')
+if (!lessons1.lessons.some((l) => l.text.includes('去重'))) throw new Error('没抽到《成功经验》这类条目')
+if (!existsSync(join(process.env.DSH_HOME, 'dsh-thinking-review', 'lessons.json'))) throw new Error('lessons.json 没落盘')
+if (!existsSync(join(process.env.DSH_HOME, 'dsh-thinking-review', 'lessons.md'))) throw new Error('lessons.md 没落盘')
+console.log('经验库:', lessons1.total, '条, 整理次数', lessons1.digestCount)
+
+// 同样的复盘内容再来一次，再整理：条目不该翻倍（去重合并）
+const beforeTotal = lessons1.total
+const digest2 = JSON.parse((await call('/dsh-thinking-review/lessons/digest', 'POST', '/dsh-thinking-review/lessons/digest', {})).body)
+const lessons2 = JSON.parse((await call('/dsh-thinking-review/lessons', 'GET', '/dsh-thinking-review/lessons?limit=100')).body)
+if (lessons2.total !== beforeTotal) throw new Error('重复整理后条数变了：' + beforeTotal + ' -> ' + lessons2.total)
+console.log('去重 OK:', beforeTotal, '条, 整理次数', digest2.digestCount)
+
+// 检索：按关键词排序
+const search = JSON.parse((await call('/dsh-thinking-review/lessons', 'GET', '/dsh-thinking-review/lessons?limit=3&q=' + encodeURIComponent('PDF 去重 文件路径'))).body)
+if (!Array.isArray(search.lessons) || search.lessons.length === 0) throw new Error('检索没结果')
+console.log('检索首条:', search.lessons[0].id, search.lessons[0].text.slice(0, 20))
+
+// —— 经验优先：第二个开关，挂第二段提示词 ——
+const beforeExp = sections.length
+const expOn = JSON.parse((await call('/dsh-thinking-review/experience/state', 'POST', '/dsh-thinking-review/experience/state', { session: 's1', enabled: true })).body)
+if (expOn.ok !== true || expOn.enabled !== true) throw new Error('经验优先没开起来：' + JSON.stringify(expOn))
+const expSection = sections[sections.length - 1]
+if (sections.length !== beforeExp + 1 || expSection.name !== 'plugin:dsh-thinking-review:experience') throw new Error('没挂上经验优先那段')
+if (expSection.order !== 89960) throw new Error('经验优先的 order 不对：' + expSection.order)
+const expText = expSection.text()
+for (const needle of ['【经验优先 · 本会话已开启】', '先在这份经验库里找相似场景', '经验是先验不是证据', '不要为了用经验而套', '经验库里没有相似场景', '收尾自检']) {
+  if (!expText.includes(needle)) throw new Error('经验优先提示词缺少：' + needle)
+}
+if (!expText.includes('[l')) throw new Error('经验优先没带上经验条目')
+console.log('经验优先提示词:', expText.length, '字')
+
+const diagExp = JSON.parse((await call('/dsh-thinking-review/text', 'GET', '/dsh-thinking-review/text?session=s1')).body)
+if (!diagExp.experience.includes('【经验优先')) throw new Error('/text 没带经验优先文本')
+if (diagExp.experienceOrder !== 89960) throw new Error('/text 的 experienceOrder 不对')
+
+const expOff = JSON.parse((await call('/dsh-thinking-review/experience/state', 'POST', '/dsh-thinking-review/experience/state', { session: 's1', enabled: false })).body)
+if (expOff.enabled !== false) throw new Error('经验优先没关掉')
+if (!disposed.includes('plugin:dsh-thinking-review:experience')) throw new Error('关掉后没卸载经验优先那段：' + JSON.stringify(disposed))
+const mountedDiag = JSON.parse((await call('/dsh-thinking-review/mounted', 'GET', '/dsh-thinking-review/mounted')).body)
+if (!Array.isArray(mountedDiag.experience) || !mountedDiag.lessons) throw new Error('/mounted 没带经验库信息')
 
 // 删除
 console.log('删除:', (await call('/dsh-thinking-review/reviews/delete', 'POST', '/dsh-thinking-review/reviews/delete', { id: auto.id })).body)
