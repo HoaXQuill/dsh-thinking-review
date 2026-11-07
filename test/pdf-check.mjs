@@ -72,6 +72,37 @@ const head = readFileSync(file.file).subarray(0, 5).toString()
 if (head !== '%PDF-') throw new Error('不是 PDF：' + head)
 const res = await call('/dsh-thinking-review/reviews/file', 'GET', '/dsh-thinking-review/reviews/file?id=' + encodeURIComponent(file.id))
 console.log('route:', res.code, res.headers['content-type'], res.raw && res.raw.length, 'bytes')
+// 同一会话的第二次复盘：并进同一份 PDF，文件路径不变
+const text2 = ['## 会话摘要', '第二次复盘：验证同一会话不会另起一个文件。'.repeat(4), '', '## 成功经验', '同一 id 覆盖同一个 PDF，前面几段要留着。'.repeat(3), '', '## 候选长期记忆', '无。'].join('\n')
+for (const l of listeners) {
+  if (l.type !== 'session/event') continue
+  l.fn('p1', { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: text2 }] } } })
+  l.fn('p1', { type: 'turn/end', data: {} })
+}
+const merged = await (async () => {
+  const start = Date.now()
+  while (Date.now() - start < 60000) {
+    try {
+      const parsed = JSON.parse(readFileSync(join(process.env.DSH_HOME, 'dsh-thinking-review', 'reviews.json'), 'utf8'))
+      const first = parsed.reviews && parsed.reviews[0]
+      if (first && Array.isArray(first.sections) && first.sections.length >= 2 && first.file && existsSync(first.file)) return first
+    } catch (e) {}
+    await new Promise((r) => setTimeout(r, 200))
+  }
+  return null
+})()
+if (!merged) {
+  try { console.log('索引现状:', readFileSync(join(process.env.DSH_HOME, 'dsh-thinking-review', 'reviews.json'), 'utf8').slice(0, 1200)) } catch (e) {}
+  throw new Error('第二次复盘没并进同一份')
+}
+if (merged.id !== file.id) throw new Error('换了档案 id：' + merged.id)
+if (merged.file !== file.file) throw new Error('换了文件路径：' + merged.file)
+const mergedBytes = statSync(merged.file).size
+if (readFileSync(merged.file).subarray(0, 5).toString() !== '%PDF-') throw new Error('合并后不是 PDF')
+if (mergedBytes < 800) throw new Error('合并后 PDF 太小：' + mergedBytes)
+console.log('合并后:', merged.kind, mergedBytes, 'bytes, 段数', merged.sections.length, merged.file === file.file ? '同一文件' : '不同文件')
+
+// 真浏览器生成的 PDF 里能抽到两段文字（用 pdftotext 复核，装了就查）
 console.log('PDF OK')
 
 // 留下文件路径，供人眼核对

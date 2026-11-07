@@ -90,90 +90,162 @@ console.log('disposed:', JSON.stringify(disposed))
 console.log('mounted:', (await call('/dsh-thinking-review/mounted', 'GET', '/dsh-thinking-review/mounted')).body)
 console.log('bad GET:', JSON.stringify(await call('/dsh-thinking-review/state', 'GET', '/dsh-thinking-review/state')))
 
-// —— 复盘捕获：登记 → 攒正文 → 一轮结束落库 ——
-const emit = (event) => {
-  for (const l of listeners) if (l.type === 'session/event') l.fn('s1', event)
+// —— 自动存档：每个会话一条档案，同一会话的复盘并进同一份 ——
+const emit = (session, event) => {
+  for (const l of listeners) if (l.type === 'session/event') l.fn(session, event)
 }
-const longText = '复盘：这次先把按钮修好了，根因是槽位键写错，客户端整个 apply 失败。'.repeat(8)
-console.log('登记:', JSON.stringify(await call('/dsh-thinking-review/reviews/request', 'POST', '/dsh-thinking-review/reviews/request', { session: 's1' })))
-emit({ type: 'assistant/message', data: { message: { content: [
+const userMsg = (text) => ({ type: 'user/message', data: { message: { content: [{ type: 'text', text }] } } })
+const botMsg = (text) => ({ type: 'assistant/message', data: { message: { content: [
   { type: 'reasoning', text: '先想想' },
-  { type: 'text', text: longText },
+  { type: 'text', text },
   { type: 'tool-call', id: 't1', name: 'remember', arguments: {} },
 ] } } })
-emit({ type: 'turn/end', data: {} })
+const endTurn = () => ({ type: 'turn/end', data: {} })
+const listOf = async () => JSON.parse((await call('/dsh-thinking-review/reviews', 'GET', '/dsh-thinking-review/reviews')).body)
 
-const list = JSON.parse((await call('/dsh-thinking-review/reviews', 'GET', '/dsh-thinking-review/reviews')).body)
-if (list.reviews.length !== 1) throw new Error('复盘没落库，条数=' + list.reviews.length)
-const rec = list.reviews[0]
-if (!rec.chars || rec.chars < 160) throw new Error('复盘字数不对：' + rec.chars)
-if (!rec.summary || rec.summary.length === 0) throw new Error('没有摘要')
-if (rec.title !== '冒烟会话') throw new Error('标题没抓到：' + rec.title)
-console.log('落库:', rec.id, rec.chars, '字, 标题', rec.title)
+const askText = '把这个会话的复盘做成 PDF，同一会话不要重复生成。'
+const answerText = '改好了：每个会话一条档案，同一会话的后续复盘并进同一份 PDF，同样的段落只留一份。'.repeat(3)
+emit('s1', userMsg(askText))
+emit('s1', botMsg(answerText))
+emit('s1', endTurn())
+
+const list1 = await listOf()
+if (list1.reviews.length !== 1) throw new Error('没自动存档，条数=' + list1.reviews.length)
+const auto = list1.reviews[0]
+if (auto.id !== 'session-s1') throw new Error('档案 id 不是会话固定 id：' + auto.id)
+if (auto.auto !== true) throw new Error('没标成自动档案')
+if (auto.sections !== 1) throw new Error('第一轮应该只有「最近进展」一段，得到 ' + auto.sections)
+if (!auto.chars || auto.chars < 160) throw new Error('档案字数不对：' + auto.chars)
+if (auto.title !== '冒烟会话') throw new Error('标题没抓到：' + auto.title)
+console.log('自动存档:', auto.id, auto.chars, '字, 段数', auto.sections, '标题', auto.title)
 
 // 落盘：reviews.json 里能读到同一条（重启后靠它恢复）
-const onDisk = JSON.parse(readFileSync2(join(process.env.DSH_HOME, 'dsh-thinking-review', 'reviews.json'), 'utf8'))
+const diskPath = join(process.env.DSH_HOME, 'dsh-thinking-review', 'reviews.json')
+const onDisk = JSON.parse(readFileSync2(diskPath, 'utf8'))
 if (!Array.isArray(onDisk.reviews) || onDisk.reviews.length !== 1) throw new Error('reviews.json 没写对')
+if (onDisk.reviews[0].updatedAt === '') throw new Error('没记更新时间')
 console.log('落盘 OK:', onDisk.reviews[0].id)
 
-// 复盘文件：落库后要在后台生成，等到文件字段出现
 const waitFor = async (fn, ms) => {
   const start = Date.now()
   while (Date.now() - start < ms) {
-    const value = fn()
+    const value = await fn()
     if (value) return value
     await new Promise((r) => setTimeout(r, 100))
   }
   return ''
 }
-const reviewsFile = join(process.env.DSH_HOME, 'dsh-thinking-review', 'reviews.json')
-const filePath = await waitFor(() => {
+const fileOf = (id) => waitFor(() => {
   try {
-    const disk = JSON.parse(readFileSync2(reviewsFile, 'utf8'))
-    const first = Array.isArray(disk.reviews) ? disk.reviews[0] : null
-    return first && typeof first.file === 'string' ? first.file : ''
+    const disk = JSON.parse(readFileSync2(diskPath, 'utf8'))
+    const found = (disk.reviews || []).find((item) => item.id === id)
+    return found && typeof found.file === 'string' && found.file !== '' ? found.file : ''
   } catch (error) {
     return ''
   }
 }, 10000)
-if (filePath === '') throw new Error('复盘文件没生成')
-if (!filePath.endsWith('.md')) throw new Error('NO_PDF 下应该是 .md，得到 ' + filePath)
-const fileText = readFileSync2(filePath, 'utf8')
-if (!fileText.includes('槽位键')) throw new Error('文件里没有复盘正文')
-console.log('复盘文件:', filePath.endsWith('.md') ? 'md' : 'other', fileText.length, '字')
 
-const withFile = JSON.parse((await call('/dsh-thinking-review/reviews', 'GET', '/dsh-thinking-review/reviews')).body)
-if (!withFile.reviews[0].file || withFile.reviews[0].kind !== 'md') throw new Error('列表没带文件字段')
+const firstFile = await fileOf(auto.id)
+if (firstFile === '') throw new Error('档案文件没生成')
+if (!firstFile.endsWith('.md')) throw new Error('NO_PDF 下应该是 .md，得到 ' + firstFile)
+if (!readFileSync2(firstFile, 'utf8').includes('最近进展')) throw new Error('文件里没有自动存档段')
+console.log('档案文件:', firstFile.endsWith('.md') ? 'md' : 'other')
+
+// 一次完整复盘：并进同一个会话档案，多一段
+const reviewText = [
+  '## 会话摘要', '', '这一轮把复盘落成 PDF，并让后续复盘并进同一份。'.repeat(6),
+  '', '## 结论与决定', '', '每个会话固定一条档案，id 就是 session-<会话>，文件路径固定所以覆盖同一份。'.repeat(3),
+  '', '## 成功经验', '', '难点在去重：同一段文字归一化后相同就不再追加，只更新时间。'.repeat(4),
+  '', '## 候选长期记忆', '', '无。',
+].join('\n')
+emit('s1', botMsg(reviewText))
+emit('s1', endTurn())
+
+const list2 = await listOf()
+if (list2.reviews.length !== 1) throw new Error('复盘另起了一条，条数=' + list2.reviews.length)
+if (list2.reviews[0].id !== auto.id) throw new Error('复盘没并进同一份档案')
+if (list2.reviews[0].sections !== 2) throw new Error('应该 2 段，得到 ' + list2.reviews[0].sections)
+console.log('并进同一份:', list2.reviews[0].id, '段数', list2.reviews[0].sections)
+
+// 再复盘一次同样的内容：不重复追加
+emit('s1', botMsg(reviewText))
+emit('s1', endTurn())
+const list3 = await listOf()
+if (list3.reviews[0].sections !== 2) throw new Error('重复复盘又加了一段，段数=' + list3.reviews[0].sections)
+console.log('重复复盘已去重，段数', list3.reviews[0].sections)
+
+// 换一段内容再复盘：同一份文件里追加第二段复盘（总 3 段）
+emit('s1', botMsg(reviewText.replace('去重', '合并')))
+emit('s1', endTurn())
+const list4 = await listOf()
+if (list4.reviews[0].sections !== 3) throw new Error('新复盘没并进去，段数=' + list4.reviews[0].sections)
+
+// 下一次普通对话：只更新「最近进展」，不新增段
+emit('s1', userMsg('再补一句：PDF 要能直接打开，别只是落一个文件在磁盘上。'))
+emit('s1', botMsg('已经能直接打开：点「打开」走 /reviews/file，content-type 是 application/pdf，浏览器内置阅读器直接渲染。'.repeat(4)))
+emit('s1', endTurn())
+const list5 = await listOf()
+if (list5.reviews[0].sections !== 3) throw new Error('普通对话不该新增段，段数=' + list5.reviews[0].sections)
+
+const mergedFile = await fileOf(auto.id)
+if (mergedFile !== firstFile) throw new Error('同一会话换了文件路径：' + mergedFile)
+// 文件是后台重新打印的，等它把新内容写进去
+const mergedText = await waitFor(() => {
+  try {
+    const text = readFileSync2(mergedFile, 'utf8')
+    return text.includes('PDF 要能直接打开') ? text : ''
+  } catch (error) {
+    return ''
+  }
+}, 8000)
+if (mergedText === '') throw new Error('合并后的文件没更新')
+if (!mergedText.includes('会话摘要') || !mergedText.includes('成功经验')) throw new Error('合并后的文件没有复盘正文')
+if (!mergedText.includes('最近进展')) throw new Error('合并后丢了最近进展段')
+if (!mergedText.includes('PDF 要能直接打开')) throw new Error('最近进展没跟着更新')
+console.log('合并文件:', mergedFile.split(/[\\/]/).pop(), mergedText.length, '字')
+
+// 重打是后台做的，等文件字段回填
+const withFile = await waitFor(async () => {
+  const now = await listOf()
+  return now.reviews[0] && now.reviews[0].file ? now.reviews : null
+}, 8000)
+if (withFile === null) throw new Error('列表没带文件字段')
+if (withFile[0].kind !== 'md') throw new Error('文件类型不对：' + withFile[0].kind)
 
 // 面板「打开」走的就是这条：取文件本体
-const fileRes = await call('/dsh-thinking-review/reviews/file', 'GET', '/dsh-thinking-review/reviews/file?id=' + encodeURIComponent(rec.id))
+const fileRes = await call('/dsh-thinking-review/reviews/file', 'GET', '/dsh-thinking-review/reviews/file?id=' + encodeURIComponent(auto.id))
 if (fileRes.code !== 200) throw new Error('取文件失败：' + fileRes.code + ' ' + fileRes.body)
 if (String(fileRes.headers['content-type'] || '').indexOf('text/markdown') !== 0) throw new Error('content-type 不对：' + fileRes.headers['content-type'])
-console.log('取文件 OK:', fileRes.headers['content-type'], String(fileRes.body).length, '字')
+console.log('取文件 OK:', fileRes.headers['content-type'], fileRes.raw ? fileRes.raw.length : 0, '字节')
 
 const missing = await call('/dsh-thinking-review/reviews/file', 'GET', '/dsh-thinking-review/reviews/file?id=nope')
 if (missing.code !== 404) throw new Error('不存在的 id 应该 404，得到 ' + missing.code)
 
-const item = JSON.parse((await call('/dsh-thinking-review/reviews/item', 'GET', '/dsh-thinking-review/reviews/item?id=' + encodeURIComponent(rec.id))).body)
-if (!item.ok || !item.review.text.includes('槽位键')) throw new Error('全文没取到')
+const item = JSON.parse((await call('/dsh-thinking-review/reviews/item', 'GET', '/dsh-thinking-review/reviews/item?id=' + encodeURIComponent(auto.id))).body)
+if (!item.ok || !item.review.text.includes('会话摘要')) throw new Error('全文没取到')
 
-// 太短的输出丢掉，不落库
-await call('/dsh-thinking-review/reviews/request', 'POST', '/dsh-thinking-review/reviews/request', { session: 's1' })
-emit({ type: 'assistant/message', data: { message: { content: [{ type: 'text', text: '太短' }] } } })
-emit({ type: 'turn/end', data: {} })
-const afterShort = JSON.parse((await call('/dsh-thinking-review/reviews', 'GET', '/dsh-thinking-review/reviews')).body)
-if (afterShort.reviews.length !== 1) throw new Error('短输出也落库了')
+// 太短的输出不落库，也不覆盖已有的最近进展
+emit('s1', botMsg('太短'))
+emit('s1', endTurn())
+const afterShort = await listOf()
+if (afterShort.reviews.length !== 1) throw new Error('短输出另起了档案')
+if (!readFileSync2(mergedFile, 'utf8').includes('PDF 要能直接打开')) throw new Error('短输出覆盖了最近进展')
 
-// 没登记过的会话根本不收
-emit({ type: 'assistant/message', data: { message: { content: [{ type: 'text', text: longText }] } } })
-emit({ type: 'turn/end', data: {} })
-console.log('未登记会话未收:', JSON.parse((await call('/dsh-thinking-review/reviews', 'GET', '/dsh-thinking-review/reviews')).body).reviews.length === 1)
+// 另一个会话：各自一份档案，互不干扰
+emit('s3', userMsg('另一件事：把左侧导航里的「复盘经验」图标换成文件夹，16x16，描边别用填充。'))
+emit('s3', botMsg('图标已经换成文件夹样式：viewBox 0 0 16 16，stroke 用 currentColor，strokeWidth 1.5，只画 path 不填充，跟着主题色走。'.repeat(2)))
+emit('s3', endTurn())
+const list6 = await listOf()
+if (list6.reviews.length !== 2) throw new Error('不同会话应该各一条，条数=' + list6.reviews.length)
+const other = list6.reviews.find((x) => x.sessionId === 's3')
+if (!other || other.id === auto.id) throw new Error('不同会话共用了档案 id')
+console.log('会话隔离 OK:', other.id)
 
 // 删除
-console.log('删除:', (await call('/dsh-thinking-review/reviews/delete', 'POST', '/dsh-thinking-review/reviews/delete', { id: rec.id })).body)
-const afterDelete = JSON.parse((await call('/dsh-thinking-review/reviews', 'GET', '/dsh-thinking-review/reviews')).body)
-if (afterDelete.reviews.length !== 0) throw new Error('删除没生效')
-if (existsSync(filePath)) throw new Error('删除后文件还在：' + filePath)
+console.log('删除:', (await call('/dsh-thinking-review/reviews/delete', 'POST', '/dsh-thinking-review/reviews/delete', { id: auto.id })).body)
+const afterDelete = await listOf()
+if (afterDelete.reviews.length !== 1) throw new Error('删除没生效')
+if (existsSync(mergedFile)) throw new Error('删除后文件还在：' + mergedFile)
 console.log('删文件 OK')
 
 // 重启后从文件恢复（此时文件里是 off）
