@@ -2,7 +2,7 @@
 
 DSH 插件，四件事：
 
-1. **追问澄清**（per-session 开关）：开了以后，DSH 遇到需求含糊时先问清再动手；它只问「答案不同、做法就不同」的问题，问完给一句复述与推翻条件，然后直接做。
+1. **追问澄清**（per-session 开关，带 Host 侧闸门）：开了以后，每一轮 DSH 都得先想问题——**没提问（也没写「无需提问：理由」）就调用工具，会被 Host 直接拦下**，不是只写在提示词里。它只问「答案不同、做法就不同」的问题，问完给一句复述与推翻条件，然后直接做。
 2. **复盘本会话**（按钮）：把这一轮问答、结论、成功经验整理成四块，再单独问你是否写入长期记忆；你同意哪几步，才写哪几步。
 3. **复盘经验**（左侧导航新一栏）：每个会话自动存成一页 PDF，后续复盘并进同一份（同样的段落只留一份），点开就能看，不用再翻对话记录。
 4. **经验库 + 经验优先**（每三天整理一次）：把复盘里的结论与经验抽成条目、去重合并；打开「经验优先」后，DSH 动手前先按本轮诉求在库里找相似场景，找到就引用编号与适用条件。
@@ -14,7 +14,7 @@ DSH 插件，四件事：
 | 类型 | 对话增强 / 记忆 |
 | GitHub topics | `dsh` `dsh-plugin` `thinking` `review` `clarify` `memory` `cordis` |
 | 依赖 | DSH 桌面端（web 客户端半）、cordis 插件树、Node ≥ 20 |
-| 版本 | 1.6.0 |
+| 版本 | 1.7.0 |
 | 仓库 | https://github.com/HoaXQuill/dsh-thinking-review |
 
 ## 安装
@@ -60,9 +60,19 @@ dsh plugin add file:C:/Users/HoaXQ/Desktop/插件/dsh-thinking-review
 
 对话输入框下面多一行：
 
-- `[● 追问澄清：开/关]` —— 只对本会话生效，状态存 `$DSH_HOME/dsh-thinking-review/state.json`，刷新页面、重启 DSH 都还在。
+- `[● 追问澄清：开/关]` —— 只对本会话生效，状态存 `$DSH_HOME/dsh-thinking-review/state.json`，刷新页面、重启 DSH 都还在。开着时带**闸门**：这一轮还没提问就去调工具会被拒（见下）。
 - `[● 经验优先：开/关]` —— 只对本会话生效：开了以后 DSH 动手前先去经验库匹配相似场景；与「追问澄清」互相独立，可以只开一个。
 - `[复盘本会话]` —— 点一下会向当前会话发一条复盘指令（不发到别的会话，也不改你的草稿）。
+
+### 闸门：开着就先问再动
+
+提示词管不住模型（实测：开关开着，仍有会话 161 次工具调用、0 次提问）。所以从 1.7.0 起多一层真闸门：
+
+- 插件用 `ctx.get('tools').guard(...)` 注册一个全局守卫，宿主在每次工具调用**分发前**同步调用它；返回字符串 = 拒绝这次调用，模型收到 `Error: <理由>`。
+- 判定：会话开着「追问澄清」，且**这一轮**（从上次用户消息算起）还没有出现过带问号的助手正文，也没有出现过以「无需提问：」开头的一行说明 → 拦。
+- 被拦后只有两条路：① 用一条消息提 1–3 个编号问题，然后停住等回答；② 明确写一行「无需提问：<一句依据>」（说明为什么所有可能答案都指向同一做法），再动手。
+- 上限：同一个回合连着被拦 8 次就放行，宁少拦一轮，也不把会话卡死。
+- 子代理、没开这个开关的会话一律放行。`GET /dsh-thinking-review/gate` 可以看当前每个会话「问过没有、被拦几次」。
 
 ### 追问逻辑（为什么这么问）
 
@@ -154,7 +164,8 @@ Host 半注册在 `/dsh-thinking-review`：
 | GET | `/dsh-thinking-review/state?session=<id>` | `{ok, session, enabled}` |
 | POST | `/dsh-thinking-review/state` | body `{session, enabled}`，写入并立即挂载/卸载 |
 | GET | `/dsh-thinking-review/text[?session=<id>]` | 当前进程实际生效的提示词（诊断用；带 `session` 时含经验优先那段） |
-| GET | `/dsh-thinking-review/mounted` | 已挂载的会话列表、状态文件路径、复盘条数 |
+| GET | `/dsh-thinking-review/mounted` | 已挂载的会话列表、状态文件路径、复盘条数、闸门状态 |
+| GET | `/dsh-thinking-review/gate` | 闸门现状：每个会话 `{asked, blocked}` + 拒绝文案 |
 | POST | `/dsh-thinking-review/reviews/request` | body `{session}`，登记「这一轮要收进复盘」 |
 | GET | `/dsh-thinking-review/reviews` | 复盘列表（不含全文），附正在等待的会话 |
 | GET | `/dsh-thinking-review/reviews/item?id=` | 单条复盘全文 |

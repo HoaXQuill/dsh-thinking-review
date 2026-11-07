@@ -27,13 +27,18 @@ const subagent = { session: { id: 's2', header: { origin: 'subagent' } }, ctx: a
 
 let listed = [agent, subagent]
 const listeners = []
+const guards = []
 const ctx = {
   agents: { list: () => listed },
   webServer: { register: (r) => { routes.set(r.path, r.handler); return () => {} } },
   effect: (fn) => { const d = fn(); return () => { if (typeof d === 'function') d() } },
   interval: () => () => {},
   on: (type, fn, opts) => { listeners.push({ type, fn, opts }); return () => {} },
-  get: (name) => (name === 'sessions' ? { get: () => ({ title: '冒烟会话' }) } : undefined),
+  get: (name) => {
+    if (name === 'sessions') return { get: () => ({ title: '冒烟会话' }) }
+    if (name === 'tools') return { guard: (fn) => { guards.push(fn); return () => {} } }
+    return undefined
+  },
 }
 
 mod.apply(ctx)
@@ -75,6 +80,7 @@ for (const needle of [
   '至少 3 种合理解读', '分离预测', '做法分岔', '只读侦察', '什么会让你改主意', '一行边界',
   '多维扫描', '六个维度', '对象维', '尺度维', '时间维', '因果维', '反证维', '二阶维',
   '提问门槛', '答错会差在哪', '拦路', '塑形', '重扫十个面与六个维度',
+  '先想问题', '无需提问：', 'Host 侧闸门',
 ]) {
   if (!text.includes(needle)) throw new Error('提示词缺少判据：' + needle)
 }
@@ -304,7 +310,41 @@ if (afterDelete.reviews.length !== 1) throw new Error('删除没生效')
 if (existsSync(mergedFile)) throw new Error('删除后文件还在：' + mergedFile)
 console.log('删文件 OK')
 
-// 重启后从文件恢复（此时文件里是 off）
+// —— 追问闸门：开着「追问澄清」的会话，这一轮不先提问就不许调工具 ——
+if (guards.length === 0) throw new Error('没注册 tools.guard')
+const gateS1 = (agentLike) => guards[0]({ name: 'run_code', agent: agentLike || agent })
+const gateS9 = (sid) => guards[0]({ name: 'run_code', agent: { session: { id: sid } } })
+
+const gateOn = JSON.parse((await call('/dsh-thinking-review/state', 'POST', '/dsh-thinking-review/state', { session: 's1', enabled: true })).body)
+if (gateOn.enabled !== true) throw new Error('没重新开启追问澄清')
+emit('s1', userMsg('帮我把这件事做了'))
+if (!gateS1()) throw new Error('开启后第一次工具调用没被拦')
+if (!gateS1().includes('无需提问：')) throw new Error('拒绝理由里缺逃生口说明')
+emit('s1', botMsg('先确认一下：1. 要 A 还是 B？默认 A。'))
+if (gateS1() !== undefined) throw new Error('问过之后还拦着')
+
+emit('s1', userMsg('那就 A'))
+if (!gateS1()) throw new Error('新一轮没有重新上膛')
+emit('s1', botMsg('无需提问：只有一个文件要改，做法唯一，先读再改。'))
+if (gateS1() !== undefined) throw new Error('写了「无需提问：」之后还拦着')
+
+if (gateS9('s9') !== undefined) throw new Error('没开追问澄清的会话不该被拦')
+if (gateS1(subagent) !== undefined) throw new Error('子代理不该被拦')
+
+// 拦太多次就放行，别把会话卡死
+emit('s1', userMsg('再来一轮'))
+let denials = 0
+for (let i = 0; i < 12; i += 1) if (gateS1()) denials += 1
+if (denials !== 8) throw new Error('拦截上限不对：' + denials)
+if (gateS1() !== undefined) throw new Error('超过上限之后应该放行')
+
+const gateDiag = JSON.parse((await call('/dsh-thinking-review/gate', 'GET', '/dsh-thinking-review/gate')).body)
+if (!gateDiag.ok || !gateDiag.gates.some((g) => g.session === 's1')) throw new Error('/gate 没带状态：' + JSON.stringify(gateDiag))
+if (!gateDiag.denial.includes('先提问，再动手')) throw new Error('/gate 的拒绝文案不对')
+console.log('闸门 OK：拦截 / 放行 / 上限', denials)
+
+// 重启后从文件恢复（先把开关关掉，确认重启不会凭空多挂一段）
+await call('/dsh-thinking-review/state', 'POST', '/dsh-thinking-review/state', { session: 's1', enabled: false })
 const before = sections.length
 mod.apply({ ...ctx, webServer: { register: () => () => {} } })
 console.log('reboot 后未多挂:', sections.length === before)
