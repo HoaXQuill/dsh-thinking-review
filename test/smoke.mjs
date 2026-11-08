@@ -80,7 +80,7 @@ for (const needle of [
   '至少 3 种合理解读', '分离预测', '做法分岔', '只读侦察', '什么会让你改主意', '一行边界',
   '多维扫描', '六个维度', '对象维', '尺度维', '时间维', '因果维', '反证维', '二阶维',
   '提问门槛', '答错会差在哪', '拦路', '塑形', '重扫十个面与六个维度',
-  '先想问题', '无需提问：', 'Host 侧闸门',
+  '先判这一轮是什么', '问完就停', 'Host 侧闸门', '答案回合',
 ]) {
   if (!text.includes(needle)) throw new Error('提示词缺少判据：' + needle)
 }
@@ -319,14 +319,33 @@ const gateOn = JSON.parse((await call('/dsh-thinking-review/state', 'POST', '/ds
 if (gateOn.enabled !== true) throw new Error('没重新开启追问澄清')
 emit('s1', userMsg('帮我把这件事做了'))
 if (!gateS1()) throw new Error('开启后第一次工具调用没被拦')
-if (!gateS1().includes('无需提问：')) throw new Error('拒绝理由里缺逃生口说明')
-emit('s1', botMsg('先确认一下：1. 要 A 还是 B？默认 A。'))
-if (gateS1() !== undefined) throw new Error('问过之后还拦着')
+if (!gateS1().includes('问完就停住')) throw new Error('拒绝理由里缺「问完就停」的说明')
 
+// 问完还在同一轮里动手 → 也拦（问完必须停）
+emit('s1', botMsg('先确认一下：1. 要 A 还是 B？默认 A。'))
+const stopReason = gateS1()
+if (stopReason === undefined || !stopReason.includes('问完就停')) throw new Error('问过之后同轮继续动手应该被拦，实际：' + stopReason)
+
+// 用户回答 = 答案回合：不再逼问，直接放行
 emit('s1', userMsg('那就 A'))
-if (!gateS1()) throw new Error('新一轮没有重新上膛')
-emit('s1', botMsg('无需提问：只有一个文件要改，做法唯一，先读再改。'))
-if (gateS1() !== undefined) throw new Error('写了「无需提问：」之后还拦着')
+if (gateS1() !== undefined) throw new Error('答案回合不该再拦')
+emit('s1', botMsg('按 A 改完了，测试也过了。'))
+
+// 下一条新需求（上一条助手消息没有提问）：重新上膛
+emit('s1', userMsg('顺手把文档也改一下'))
+if (!gateS1()) throw new Error('新需求没有重新上膛')
+
+// 正文里没有问号 → 不算问完
+emit('s1', botMsg('我先读文件，再决定怎么改。'))
+if (!gateS1()) throw new Error('没问却放行，闸门失效')
+
+// 用户明确叫停提问 → 放行
+emit('s1', userMsg('别问了，直接做'))
+if (gateS1() !== undefined) throw new Error('用户说别问了还拦')
+
+// 回执类不算新需求
+emit('s1', userMsg('继续'))
+if (gateS1() !== undefined) throw new Error('回执不该被拦')
 
 if (gateS9('s9') !== undefined) throw new Error('没开追问澄清的会话不该被拦')
 if (gateS1(subagent) !== undefined) throw new Error('子代理不该被拦')
@@ -340,7 +359,8 @@ if (gateS1() !== undefined) throw new Error('超过上限之后应该放行')
 
 const gateDiag = JSON.parse((await call('/dsh-thinking-review/gate', 'GET', '/dsh-thinking-review/gate')).body)
 if (!gateDiag.ok || !gateDiag.gates.some((g) => g.session === 's1')) throw new Error('/gate 没带状态：' + JSON.stringify(gateDiag))
-if (!gateDiag.denial.includes('先提问，再动手')) throw new Error('/gate 的拒绝文案不对')
+if (!gateDiag.ask.includes('先提问，再动手')) throw new Error('/gate 的拒答文案不对')
+if (!gateDiag.stop.includes('问完就停')) throw new Error('/gate 的停手文案不对')
 console.log('闸门 OK：拦截 / 放行 / 上限', denials)
 
 // 重启后从文件恢复（先把开关关掉，确认重启不会凭空多挂一段）
