@@ -339,9 +339,35 @@ if (!gateS1()) throw new Error('新需求没有重新上膛')
 emit('s1', botMsg('我先读文件，再决定怎么改。'))
 if (!gateS1()) throw new Error('没问却放行，闸门失效')
 
-// 用户明确叫停提问 → 放行
-emit('s1', userMsg('别问了，直接做'))
-if (gateS1() !== undefined) throw new Error('用户说别问了还拦')
+// 叫停提问的各种说法都要认（不锁「别问了」三个字）
+const synonymSaid = [
+  '别问了，直接做',
+  '不用确认了，就按你的理解来',
+  '行了行了直接来',
+  '你定',
+  '看着办吧',
+  '按默认就行',
+  '我信你',
+  '交给你了',
+  '少废话，动手',
+  '不用再问了，我时间紧',
+  '你觉得呢',
+  '你说怎么办',
+  '还有要问的吗',
+  '你还有问题吗',
+  'just do it',
+  'ok 直接干',
+]
+for (const said of synonymSaid) {
+  emit('s1', userMsg('顺手把文档也改一下'))
+  if (!gateS1()) throw new Error('新需求没拦住（准备断言叫停）：' + said)
+  emit('s1', userMsg(said))
+  const reason = gateS1()
+  if (reason !== undefined) throw new Error('叫停说法没被认出来：「' + said + '」→ ' + reason)
+  // 这一轮被当成叫停回合，下一轮该重新上膛
+  emit('s1', botMsg('按你说的做。'))
+}
+console.log('叫停同义说法 OK：' + synonymSaid.length + ' 种')
 
 // 回执类不算新需求
 emit('s1', userMsg('继续'))
